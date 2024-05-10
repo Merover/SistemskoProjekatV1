@@ -40,7 +40,7 @@ namespace SysProjekat
             // !!!
             lock (lockObject)
             {
-                gif.Save($"../../../GifFile{index}.gif");
+             //   gif.Save($"../../../GifFile{index}.gif");
             }
         }
 

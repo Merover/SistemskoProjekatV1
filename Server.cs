@@ -1,134 +1,133 @@
-﻿using NHibernate.Cache;
-using System;
-using System.Collections.Generic;
+﻿using Microsoft.Extensions.Caching.Memory;
+using SysProjekat;
 using System.Diagnostics;
-using System.Linq;
 using System.Net;
 using System.Text;
-using System.IO;
-using System.Threading;
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure;
-using System;
-using System.IO;
-using System.Threading.Tasks;
 
-namespace SysProjekat
+internal class Server
 {
-    internal class AsyncServer
+    static readonly string RootFolder = Path.Combine(Directory.GetCurrentDirectory());
+    static int index = 0;
+    private static MemoryCache cache = new MemoryCache(new MemoryCacheOptions());
+
+    public static void StartWebServer()
     {
-        static readonly string RootFolder = Path.Combine(Directory.GetCurrentDirectory());
-        static int index = 0;
-        private static MemoryCache cache = new MemoryCache(new MemoryCacheOptions());
+        var listenerThread = new Thread(Listen);
+        listenerThread.IsBackground = true;
+        listenerThread.Start();
+        Console.WriteLine("Accepting requests...");
+    }
 
-        public static async Task StartWebServer()
+    static void Listen()
+    {
+        using var listener = new HttpListener();
+        listener.Prefixes.Add("http://localhost:8080/");
+        listener.Start();
+
+        while (true)
         {
-            using var listener = new HttpListener();
-            listener.Prefixes.Add("http://localhost:8080/");
-            listener.Start();
-            Console.WriteLine("Accepting requests...");
-
-            while (true)
+            try
             {
-                try
-                {
-                    HttpListenerContext context = await listener.GetContextAsync();
-                    _ = Task.Run(() => HandleRequestAsync(context));
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error accepting request: {ex.Message}");
-                }
+                HttpListenerContext context = listener.GetContext();
+                var handleRequestThread = new Thread(() => HandleRequest(context));
+                handleRequestThread.IsBackground = true;
+                handleRequestThread.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error accepting request: {ex.Message}");
             }
         }
+    }
 
-        static async Task HandleRequestAsync(HttpListenerContext context)
+    static void HandleRequest(HttpListenerContext context)
+    {
+        HttpListenerRequest request = context.Request;
+        HttpListenerResponse response = context.Response;
+
+        if (request.Url == null)
         {
-            HttpListenerRequest request = context.Request;
-            HttpListenerResponse response = context.Response;
-
-            if (request.Url == null)
-            {
-                response.StatusCode = (int)HttpStatusCode.BadRequest;
-                response.Close();
-                return;
-            }
-
-            string requestUrl = request.Url.LocalPath;
-            byte[] cachedFile = cache.Get(requestUrl) as byte[];
-
-            if (cachedFile != null)
-            {
-                ServeCachedFile(response, requestUrl, cachedFile);
-            }
-            else
-            {
-                await ServeFileFromDiskAsync(response, requestUrl);
-            }
-        }
-
-        static void ServeCachedFile(HttpListenerResponse response, string requestUrl, byte[] cachedFile)
-        {
-            response.ContentType = GetContentType(requestUrl);
-            response.ContentLength64 = cachedFile.Length;
-            response.OutputStream.Write(cachedFile, 0, cachedFile.Length);
-            Console.WriteLine($"Cached content found for request: {requestUrl}");
+            response.StatusCode = (int)HttpStatusCode.BadRequest;
             response.Close();
+            return;
         }
 
-        static async Task ServeFileFromDiskAsync(HttpListenerResponse response, string requestUrl)
+        string requestUrl = request.Url.LocalPath;
+        byte[] cachedFile = cache.Get(requestUrl) as byte[];
+
+        if (cachedFile != null)
         {
-            Console.WriteLine($"Received the following request: {requestUrl}");
+            ServeCachedFile(response, requestUrl, cachedFile);
+        }
+        else
+        {
+            ServeFileFromDisk(response, requestUrl);
+        }
+    }
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
+    static void ServeCachedFile(HttpListenerResponse response, string requestUrl, byte[] cachedFile)
+    {
+        response.ContentType = GetContentType(requestUrl);
+        response.ContentLength64 = cachedFile.Length;
+        response.OutputStream.Write(cachedFile, 0, cachedFile.Length);
+        Console.WriteLine($"Cached content found for request: {requestUrl}");
+        response.Close();
+    }
 
-            string filePath = Path.Combine(RootFolder, requestUrl.TrimStart('/'));
+    static void ServeFileFromDisk(HttpListenerResponse response, string requestUrl)
+    {
+        Console.WriteLine($"Received the following request: {requestUrl}");
 
-            if (File.Exists(filePath))
-            {
-                byte[] fileBytes = await File.ReadAllBytesAsync(filePath);
+        Stopwatch stopwatch = Stopwatch.StartNew();
 
-                cache.Set(requestUrl, fileBytes, DateTimeOffset.Now.AddMinutes(10));
+        string filePath = Path.Combine(RootFolder, requestUrl.TrimStart('/'));
 
-                _ = Task.Run(() => ConvertClass.ConvertToGif(filePath, ++index));
+        if (File.Exists(filePath))
+        {
+            byte[] fileBytes = File.ReadAllBytes(filePath);
 
-                response.ContentType = GetContentType(filePath);
-                response.ContentLength64 = fileBytes.Length;
-                await response.OutputStream.WriteAsync(fileBytes, 0, fileBytes.Length);
-                Console.WriteLine("Created a .gif file.");
-            }
-            else
-            {
-                RespondWithNotFound(response, requestUrl);
-            }
+            cache.Set(requestUrl, fileBytes, DateTimeOffset.Now.AddMinutes(10));
 
-            response.Close();
-            stopwatch.Stop();
-            Console.WriteLine($"Processed the request in {stopwatch.ElapsedMilliseconds} milliseconds.");
+            var convertThread = new Thread(() => ConvertClass.ConvertToGif(filePath, ++index));
+            convertThread.IsBackground = true;
+            convertThread.Start();
+
+            response.ContentType = GetContentType(filePath);
+            response.ContentLength64 = fileBytes.Length;
+            response.OutputStream.Write(fileBytes, 0, fileBytes.Length);
+            Console.WriteLine("Created a .gif file.");
+        }
+        else
+        {
+            RespondWithNotFound(response, requestUrl);
         }
 
-        static void RespondWithNotFound(HttpListenerResponse response, string requestUrl)
-        {
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            string errorMessage = $"File not found: {requestUrl}";
-            byte[] errorBytes = Encoding.UTF8.GetBytes(errorMessage);
-            response.OutputStream.Write(errorBytes, 0, errorBytes.Length);
-            response.Close();
-        }
+        response.Close();
+        stopwatch.Stop();
+        Console.WriteLine($"Processed the request in {stopwatch.ElapsedMilliseconds} milliseconds.");
+    }
 
-        static string GetContentType(string filePath)
+    static void RespondWithNotFound(HttpListenerResponse response, string requestUrl)
+    {
+        response.StatusCode = (int)HttpStatusCode.NotFound;
+        string errorMessage = $"File not found: {requestUrl}";
+        byte[] errorBytes = Encoding.UTF8.GetBytes(errorMessage);
+        response.OutputStream.Write(errorBytes, 0, errorBytes.Length);
+        response.Close();
+    }
+
+    static string GetContentType(string filePath)
+    {
+        string extension = Path.GetExtension(filePath)?.ToLowerInvariant();
+        switch (extension)
         {
-            string extension = Path.GetExtension(filePath).ToLower();
-            switch (extension)
-            {
-                case ".jpg":
-                case ".jpeg":
-                    return "image/jpeg";
-                case ".png":
-                    return "image/png";
-                default:
-                    return "application/octet-stream";
-            }
+            case ".jpg":
+            case ".jpeg":
+                return "image/jpeg";
+            case ".png":
+                return "image/png";
+            default:
+                return "application/octet-stream";
         }
     }
 }

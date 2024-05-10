@@ -17,8 +17,7 @@ namespace SysProjekat
             if (!Directory.Exists(RootFolder))
                 Directory.CreateDirectory(RootFolder);
 
-            ThreadPool.QueueUserWorkItem(_ => AsyncServer.StartWebServer());
-
+            Server.StartWebServer();
 
             Console.WriteLine("Started a web server on http://localhost:8080/");
             Console.ReadKey();
