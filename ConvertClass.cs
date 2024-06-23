@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using SixLabors.ImageSharp;
@@ -9,7 +8,7 @@ namespace SysProjekat
 {
     public class ConvertClass
     {
-        public static void ConvertToGif(string imagePath, int index)
+        public static string ConvertToGif(string imagePath, int index)
         {
             using var image = Image.Load<Rgba32>(imagePath);
 
@@ -18,34 +17,28 @@ namespace SysProjekat
 
             using var gif = new Image<Rgba32>(width, height);
 
-            int finishedThreads = 0;
-            object lockObject = new object();
+            ManualResetEvent[] resetEvents = new ManualResetEvent[6];
 
             for (int i = 0; i < 6; i++)
             {
+                resetEvents[i] = new ManualResetEvent(false);
                 int indexCopy = i;
-                Thread thread = new Thread(() => EditImage(image.Clone(), indexCopy, gif.Frames, ref finishedThreads, lockObject));
-                thread.Start();
-            }
-
-            while (true)
-            {
-                lock (lockObject)
+                ThreadPool.QueueUserWorkItem(state =>
                 {
-                    if (finishedThreads >= 6)
-                        break;
-                }
+                    EditImage(image.Clone(), indexCopy, gif.Frames);
+                    resetEvents[indexCopy].Set();
+                });
             }
 
-            // !!!
-            lock (lockObject)
-            {
-             //   gif.Save($"../../../GifFile{index}.gif");
-            }
+            WaitHandle.WaitAll(resetEvents);
+
+            string gifpath = $"../../../GifFile{index}.gif";
+            gif.Save(gifpath);
+
+            return gifpath;
         }
 
-
-        public static void EditImage(Image<Rgba32> image, int index, ImageFrameCollection<Rgba32> gifFrames, ref int finishedThreads, object lockObject)
+        public static void EditImage(Image<Rgba32> image, int index, ImageFrameCollection<Rgba32> gifFrames)
         {
             byte red = 0, green = 0, blue = 0;
 
@@ -102,11 +95,7 @@ namespace SysProjekat
             {
                 gifFrames.AddFrame(image.Frames.RootFrame);
             }
-
-            lock (lockObject)
-            {
-                finishedThreads++;
-            }
         }
     }
 }
+

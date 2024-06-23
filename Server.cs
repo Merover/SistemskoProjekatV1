@@ -29,9 +29,7 @@ internal class Server
             try
             {
                 HttpListenerContext context = listener.GetContext();
-                var handleRequestThread = new Thread(() => HandleRequest(context));
-                handleRequestThread.IsBackground = true;
-                handleRequestThread.Start();
+                ThreadPool.QueueUserWorkItem(_ => HandleRequest(context));
             }
             catch (Exception ex)
             {
@@ -67,7 +65,7 @@ internal class Server
 
     static void ServeCachedFile(HttpListenerResponse response, string requestUrl, byte[] cachedFile)
     {
-        response.ContentType = GetContentType(requestUrl);
+        response.ContentType = "image/gif";
         response.ContentLength64 = cachedFile.Length;
         response.OutputStream.Write(cachedFile, 0, cachedFile.Length);
         Console.WriteLine($"Cached content found for request: {requestUrl}");
@@ -84,17 +82,15 @@ internal class Server
 
         if (File.Exists(filePath))
         {
-            byte[] fileBytes = File.ReadAllBytes(filePath);
+            string gifpath = ConvertClass.ConvertToGif(filePath, Interlocked.Increment(ref index));
 
-            cache.Set(requestUrl, fileBytes, DateTimeOffset.Now.AddMinutes(10));
+            byte[] gifBytes = File.ReadAllBytes(gifpath);
 
-            var convertThread = new Thread(() => ConvertClass.ConvertToGif(filePath, ++index));
-            convertThread.IsBackground = true;
-            convertThread.Start();
+            cache.Set(requestUrl, gifBytes, DateTimeOffset.Now.AddMinutes(10));
 
-            response.ContentType = GetContentType(filePath);
-            response.ContentLength64 = fileBytes.Length;
-            response.OutputStream.Write(fileBytes, 0, fileBytes.Length);
+            response.ContentType = "image/gif";
+            response.ContentLength64 = gifBytes.Length;
+            response.OutputStream.Write(gifBytes, 0, gifBytes.Length);
             Console.WriteLine("Created a .gif file.");
         }
         else
@@ -115,19 +111,5 @@ internal class Server
         response.OutputStream.Write(errorBytes, 0, errorBytes.Length);
         response.Close();
     }
-
-    static string GetContentType(string filePath)
-    {
-        string extension = Path.GetExtension(filePath)?.ToLowerInvariant();
-        switch (extension)
-        {
-            case ".jpg":
-            case ".jpeg":
-                return "image/jpeg";
-            case ".png":
-                return "image/png";
-            default:
-                return "application/octet-stream";
-        }
-    }
 }
+
